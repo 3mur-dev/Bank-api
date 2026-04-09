@@ -1,0 +1,30 @@
+app = "bank-api-3mur"
+primary_region = "fra"
+
+[build]
+  builder = "docker"
+
+[env]
+  PORT = "8080"
+  DB_URL = "jdbc:mysql://bank-api-db:3306/bank_api?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+  DB_USERNAME = "bankuser"
+  DB_PASSWORD = "bankpass123"
+  JWT_SECRET = "your-secret-key-change-this"
+  SERVER_ADDRESS = "0.0.0.0"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  processes = ["app"]
+  
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
