@@ -8,6 +8,8 @@ A Spring Boot REST API for core banking operations with JWT authentication and r
 - User management (`CRUD`)
 - Account management (`CRUD`)
 - Account transactions: deposit, withdraw, transfer
+- Fraud checks on transfers (allow, deny, or pending review)
+- Admin transaction review: list/filter, approve, reject
 - Admin-only stats endpoint
 
 ## Tech Stack
@@ -114,6 +116,12 @@ Accounts:
 - `POST /api/accounts/{id}/withdraw`
 - `POST /api/accounts/{id}/transfer`
 
+Transactions (admin):
+
+- `GET /api/transactions?page=0&size=10&accountId=&status=&type=&fraud=`
+- `POST /api/transactions/{id}/approve`
+- `POST /api/transactions/{id}/reject`
+
 Admin:
 
 - `GET /api/admin/dashboard`
@@ -170,6 +178,12 @@ Content-Type: application/json
   "amount": 40.00
 }
 ```
+
+High-value transfer behavior:
+
+- Transfers above `5000` are flagged and stored as `PENDING`.
+- Admin must approve or reject pending transactions.
+- Denied transfers do not move balances.
 
 ## Running Tests
 

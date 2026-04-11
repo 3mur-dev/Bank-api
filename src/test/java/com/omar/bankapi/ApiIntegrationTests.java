@@ -98,13 +98,22 @@ class ApiIntegrationTests {
 
         HttpEntity<TransactionAmountDTO> request = new HttpEntity<>(depositDto, headers);
 
-        ResponseEntity<AccountDTO> depositResponse =
-                restTemplate.postForEntity("/api/accounts/" + accountId + "/deposit", request, AccountDTO.class);
+        ResponseEntity<TransactionDTO> depositResponse =
+                restTemplate.postForEntity("/api/accounts/" + accountId + "/deposit", request, TransactionDTO.class);
 
         assertThat(depositResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(depositResponse.getBody()).isNotNull();
-        assertThat(depositResponse.getBody().getBalance()).isNotNull();
-        assertThat(depositResponse.getBody().getBalance().compareTo(new BigDecimal("100.00"))).isEqualTo(0);
+
+        ResponseEntity<AccountDTO> accountResponse = restTemplate.exchange(
+                "/api/accounts/" + accountId,
+                HttpMethod.GET,
+                new HttpEntity<>(authHeaders(token)),
+                AccountDTO.class
+        );
+        assertThat(accountResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(accountResponse.getBody()).isNotNull();
+        assertThat(accountResponse.getBody().getBalance()).isNotNull();
+        assertThat(accountResponse.getBody().getBalance().compareTo(new BigDecimal("100.00"))).isEqualTo(0);
     }
 
     @Test
@@ -167,16 +176,25 @@ class ApiIntegrationTests {
         transferDTO.setAmount(new BigDecimal("40.00"));
 
         HttpEntity<TransferDTO> transferRequest = new HttpEntity<>(transferDTO, authJsonHeaders(sender.token()));
-        ResponseEntity<AccountDTO> transferResponse = restTemplate.exchange(
+        ResponseEntity<TransactionDTO> transferResponse = restTemplate.exchange(
                 "/api/accounts/" + sender.accountId() + "/transfer",
                 HttpMethod.POST,
                 transferRequest,
-                AccountDTO.class
+                TransactionDTO.class
         );
 
         assertThat(transferResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(transferResponse.getBody()).isNotNull();
-        assertThat(transferResponse.getBody().getBalance().compareTo(new BigDecimal("60.00"))).isEqualTo(0);
+
+        ResponseEntity<AccountDTO> senderAccountResponse = restTemplate.exchange(
+                "/api/accounts/" + sender.accountId(),
+                HttpMethod.GET,
+                new HttpEntity<>(authHeaders(sender.token())),
+                AccountDTO.class
+        );
+        assertThat(senderAccountResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(senderAccountResponse.getBody()).isNotNull();
+        assertThat(senderAccountResponse.getBody().getBalance().compareTo(new BigDecimal("60.00"))).isEqualTo(0);
 
         ResponseEntity<AccountDTO> receiverAccountResponse = restTemplate.exchange(
                 "/api/accounts/" + receiver.accountId(),
@@ -275,11 +293,11 @@ class ApiIntegrationTests {
         TransactionAmountDTO depositDto = new TransactionAmountDTO();
         depositDto.setAmount(amount);
 
-        ResponseEntity<AccountDTO> depositResponse = restTemplate.exchange(
+        ResponseEntity<TransactionDTO> depositResponse = restTemplate.exchange(
                 "/api/accounts/" + accountId + "/deposit",
                 HttpMethod.POST,
                 new HttpEntity<>(depositDto, authJsonHeaders(token)),
-                AccountDTO.class
+                TransactionDTO.class
         );
 
         assertThat(depositResponse.getStatusCode()).isEqualTo(HttpStatus.OK);

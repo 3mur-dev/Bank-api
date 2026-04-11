@@ -35,6 +35,14 @@ public class Transaction {
     @Column(nullable = false)
     private TransactionType type;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private Boolean successful = true;
+    private TransactionStatus status;
+
+    @Column(nullable = false)
+    private Boolean successful;
+
+    private Boolean isFlagged;
+
+    private String fraudReason;
 }

@@ -1,10 +1,6 @@
 package com.omar.bankapi.controller;
 
-import com.omar.bankapi.dto.AccountDTO;
-import com.omar.bankapi.dto.CreateAccountDTO;
-import com.omar.bankapi.dto.UpdateAccountDTO;
-import com.omar.bankapi.dto.TransactionAmountDTO;
-import com.omar.bankapi.dto.TransferDTO;
+import com.omar.bankapi.dto.*;
 import com.omar.bankapi.service.AccountService;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -51,24 +47,23 @@ public class AccountController {
         return ResponseEntity.ok(accountService.updateAccount(id, dto));
     }
     @PostMapping("/{id}/deposit")
-    public ResponseEntity<AccountDTO> deposit(
+    public ResponseEntity<TransactionDTO> deposit(
             @PathVariable Long id,
             @Valid @RequestBody TransactionAmountDTO dto) {
         return ResponseEntity.ok(accountService.deposit(id, dto));
     }
 
     @PostMapping("/{id}/withdraw")
-    public ResponseEntity<AccountDTO> withdraw(
+    public ResponseEntity<TransactionDTO> withdraw(
             @PathVariable Long id,
             @Valid @RequestBody TransactionAmountDTO dto) {
         return ResponseEntity.ok(accountService.withdraw(id, dto));
     }
 
     @PostMapping("/{id}/transfer")
-    public ResponseEntity<AccountDTO> transfer(
+    public ResponseEntity<TransactionDTO> transfer(
             @PathVariable Long id,
             @Valid @RequestBody TransferDTO dto) {
         return ResponseEntity.ok(accountService.transfer(id, dto));
     }
-
 }

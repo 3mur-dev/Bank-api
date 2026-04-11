@@ -1,10 +1,7 @@
 package com.omar.bankapi.service;
 
 import com.omar.bankapi.dto.*;
-import com.omar.bankapi.model.Account;
-import com.omar.bankapi.model.Transaction;
-import com.omar.bankapi.model.TransactionType;
-import com.omar.bankapi.model.User;
+import com.omar.bankapi.model.*;
 import com.omar.bankapi.repository.AccountRepository;
 import com.omar.bankapi.repository.TransactionRepository;
 import com.omar.bankapi.repository.UserRepository;
@@ -32,6 +29,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
+    private final FraudService fraudService;
 
     public List<AccountDTO> getAllAccounts() {
         requireAdmin();
@@ -102,7 +100,7 @@ public class AccountService {
     }
 
     @Transactional
-    public AccountDTO deposit(Long id, TransactionAmountDTO dto) {
+    public TransactionDTO  deposit(Long id, TransactionAmountDTO dto) {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found"));
@@ -124,13 +122,13 @@ public class AccountService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found"));
 
-        recordTransaction(updated, updated, amount, TransactionType.DEPOSIT);
+       Transaction tx = recordTransaction(null, updated, amount, TransactionType.DEPOSIT);
 
-        return mapToAccountDTO(updated);
+        return mapToTransactionDTO(tx);
     }
 
     @Transactional
-    public AccountDTO withdraw(Long id, TransactionAmountDTO dto) {
+    public TransactionDTO  withdraw(Long id, TransactionAmountDTO dto) {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found"));
@@ -155,67 +153,109 @@ public class AccountService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found"));
 
-        recordTransaction(updated, null, amount, TransactionType.WITHDRAW);
+        Transaction tx = recordTransaction(updated, null, amount, TransactionType.WITHDRAW);
 
-        return mapToAccountDTO(updated);
+        return mapToTransactionDTO(tx);
     }
 
     @Transactional
-    public AccountDTO transfer(Long id, TransferDTO dto) {
+    public TransactionDTO transfer(Long id, TransferDTO dto) {
 
         Account sender = accountRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Sender account not found"));
+
         requireAdminOrOwner(sender);
         requireActive(sender);
 
-        Long receiverId = dto.getReceiver();
-        Account receiver = accountRepository.findById(receiverId)
+        Account receiver = accountRepository.findById(dto.getReceiver())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Receiver account not found"));
+
         requireActive(receiver);
 
         BigDecimal amount = requirePositiveAmount(dto.getAmount());
 
-        if (sender.getId().equals(receiverId)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot transfer to same account");
+        if (sender.getId().equals(receiver.getId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Cannot transfer to same account");
         }
 
-        int senderUpdatedRows = accountRepository.decrementBalance(id, amount);
-        if (senderUpdatedRows != 1) {
+        // ================= FRAUD CHECK =================
+        FraudDTO fraud = fraudService.checkFraud(amount, sender, receiver);
+
+        if (fraud.getAction() == FraudAction.PENDING) {
+
+            Transaction fraudTx = new Transaction();
+            fraudTx.setSender(sender);
+            fraudTx.setReceiver(receiver);
+            fraudTx.setAmount(amount);
+            fraudTx.setType(TransactionType.TRANSFER);
+            fraudTx.setStatus(TransactionStatus.PENDING);
+            fraudTx.setIsFlagged(true);
+            fraudTx.setFraudReason(fraud.getFraudReason());
+            fraudTx.setSuccessful(false);
+
+            Transaction saved = transactionRepository.save(fraudTx);
+
+            return mapToTransactionDTO(saved);
+        }
+
+        if (fraud.getAction() == FraudAction.DENY) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    fraud.getFraudReason() != null ? fraud.getFraudReason() : "Transfer denied by fraud checks"
+            );
+        }
+
+        // ================= EXECUTE TRANSFER =================
+
+        int senderUpdated = accountRepository.decrementBalance(id, amount);
+
+        if (senderUpdated != 1) {
             Account currentSender = accountRepository.findById(id)
                     .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.NOT_FOUND, "Sender account not found"));
+                            HttpStatus.NOT_FOUND, "Sender not found"));
+
             if (!currentSender.isActive()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account is inactive");
             }
+
             if (currentSender.getBalance().compareTo(amount) < 0) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient balance");
             }
+
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Account update failed");
         }
 
-        int receiverUpdatedRows = accountRepository.incrementBalance(receiverId, amount);
-        if (receiverUpdatedRows != 1) {
-            Account currentReceiver = accountRepository.findById(receiverId)
+        int receiverUpdated = accountRepository.incrementBalance(receiver.getId(), amount);
+
+        if (receiverUpdated != 1) {
+            Account currentReceiver = accountRepository.findById(receiver.getId())
                     .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.NOT_FOUND, "Receiver account not found"));
+                            HttpStatus.NOT_FOUND, "Receiver not found"));
+
             if (!currentReceiver.isActive()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receiver account is inactive");
             }
+
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Account update failed");
         }
 
-        Account updatedSender = accountRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Sender account not found"));
-        Account updatedReceiver = accountRepository.findById(receiverId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Receiver account not found"));
+        // ================= SAVE TRANSACTION =================
 
-        recordTransaction(updatedSender, updatedReceiver, amount, TransactionType.TRANSFER);
+        Transaction tx = new Transaction();
+        tx.setSender(sender);
+        tx.setReceiver(receiver);
+        tx.setAmount(amount);
+        tx.setType(TransactionType.TRANSFER);
+        tx.setStatus(TransactionStatus.CONFIRMED);
+        tx.setIsFlagged(false);
+        tx.setSuccessful(true);
 
-        return mapToAccountDTO(updatedSender);
+        Transaction savedTx = transactionRepository.save(tx);
+
+        return mapToTransactionDTO(savedTx);
     }
 
     private AccountDTO mapToAccountDTO(Account account) {
@@ -241,6 +281,29 @@ public class AccountService {
         if (account.getUser() != null) {
             dto.setUserId(account.getUser().getId());
         }
+        return dto;
+    }
+
+    private TransactionDTO mapToTransactionDTO(Transaction tx) {
+
+        TransactionDTO dto = new TransactionDTO();
+
+        dto.setId(tx.getId());
+        dto.setAmount(tx.getAmount());
+        dto.setType(tx.getType());
+        dto.setStatus(tx.getStatus());
+        dto.setFraud(Boolean.TRUE.equals(tx.getIsFlagged()));
+        dto.setFraudReason(tx.getFraudReason());
+        dto.setSuccessful(tx.getSuccessful());
+
+        if (tx.getSender() != null) {
+            dto.setSenderId(tx.getSender().getId());
+        }
+
+        if (tx.getReceiver() != null) {
+            dto.setReceiverId(tx.getReceiver().getId());
+        }
+
         return dto;
     }
 
@@ -306,13 +369,16 @@ public class AccountService {
         return amount;
     }
 
-    private void recordTransaction(Account sender, Account receiver, BigDecimal amount, TransactionType type) {
+    private Transaction recordTransaction(Account sender, Account receiver, BigDecimal amount, TransactionType type) {
         Transaction transaction = new Transaction();
         transaction.setSender(sender);
         transaction.setReceiver(receiver);
         transaction.setAmount(amount);
         transaction.setType(type);
+        transaction.setStatus(TransactionStatus.CONFIRMED);
+        transaction.setIsFlagged(false);
         transaction.setSuccessful(true);
-        transactionRepository.save(transaction);
+
+        return transactionRepository.save(transaction);
     }
 }
