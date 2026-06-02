@@ -1,5 +1,7 @@
 package com.omar.bankapi.model;
 
+import com.omar.bankapi.model.enums.TransactionStatus;
+import com.omar.bankapi.model.enums.TransactionType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -39,10 +41,15 @@ public class Transaction {
     @Column(nullable = false)
     private TransactionStatus status;
 
+    @Version
+    private Long version;
+
     @Column(nullable = false)
     private Boolean successful;
 
     private Boolean isFlagged;
 
     private String fraudReason;
+
+    private LocalDateTime approvedAt;
 }

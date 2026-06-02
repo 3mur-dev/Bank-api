@@ -1,19 +1,13 @@
 package com.omar.bankapi.dto;
 
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
+import java.time.Instant;
 
-@Data
-public class UserDTO {
-
-    private Long id;
-
-    @NotBlank
-    private String username;
-
-    @Email
-    private String email;
-
-    private String role;
+public record UserDTO(
+        Long id,
+        String username,
+        String email,
+        String role,
+        boolean deleted,
+        Instant deletedAt
+) {
 }

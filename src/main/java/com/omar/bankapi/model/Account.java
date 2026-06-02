@@ -1,5 +1,6 @@
 package com.omar.bankapi.model;
 
+import com.omar.bankapi.model.enums.AccountType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -29,8 +30,14 @@ public class Account {
     @Column(nullable = false)
     private AccountType type;
 
-    @Column(nullable = false)
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    @Column(name = "closed_at")
+    private LocalDateTime closedAt;
+
+    @Column(nullable = false)
+    private boolean active = true;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
@@ -44,6 +51,7 @@ public class Account {
     @OneToMany(mappedBy = "receiver", cascade = CascadeType.ALL)
     private Set<Transaction> receivedTransactions = new HashSet<>();
 
-    @Column(nullable = false)
-    private boolean active = true;
+    @Version
+    private Long version;
+
 }

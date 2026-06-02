@@ -1,8 +1,8 @@
 package com.omar.bankapi.service;
 
-import com.omar.bankapi.dto.FraudAction;
 import com.omar.bankapi.dto.FraudDTO;
 import com.omar.bankapi.model.Account;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -10,59 +10,37 @@ import java.math.BigDecimal;
 @Service
 public class FraudService {
 
+    private final BigDecimal fraudAmountThreshold;
 
-    public static final BigDecimal FRAUD_AMOUNT_THRESHOLD = BigDecimal.valueOf(5000);
+    public FraudService(@Value("${fraud.amount-threshold:5000}") BigDecimal fraudAmountThreshold) {
+        this.fraudAmountThreshold = fraudAmountThreshold;
+    }
 
     public FraudDTO checkFraud(BigDecimal amount, Account sender, Account receiver) {
-
-        FraudDTO dto = new FraudDTO();
-
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            dto.setFraudReason("Invalid transfer amount");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.DENY);
-            return dto;
+            return FraudDTO.deny("Invalid transfer amount");
         }
 
         if (sender == null || receiver == null) {
-            dto.setFraudReason("Invalid transfer accounts");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.DENY);
-            return dto;
+            return FraudDTO.deny("Invalid transfer accounts");
         }
 
         if (sender.getId() != null && sender.getId().equals(receiver.getId())) {
-            dto.setFraudReason("Cannot transfer to same account");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.DENY);
-            return dto;
+            return FraudDTO.deny("Cannot transfer to same account");
         }
 
         if (!sender.isActive() || !receiver.isActive()) {
-            dto.setFraudReason("One of the accounts is inactive");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.DENY);
-            return dto;
+            return FraudDTO.deny("One of the accounts is closed");
         }
 
         if (sender.getBalance() != null && sender.getBalance().compareTo(amount) < 0) {
-            dto.setFraudReason("Insufficient sender balance");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.DENY);
-            return dto;
+            return FraudDTO.deny("Insufficient sender balance");
         }
 
-        if (amount.compareTo(FRAUD_AMOUNT_THRESHOLD) > 0) {
-
-            dto.setFraudReason("Transaction amount exceeds threshold");
-            dto.setIsFraud(true);
-            dto.setAction(FraudAction.PENDING);
-            return dto;
+        if (amount.compareTo(fraudAmountThreshold) > 0) {
+            return FraudDTO.pending("Transaction amount exceeds threshold");
         }
 
-        dto.setIsFraud(false);
-        dto.setAction(FraudAction.ALLOW);
-        return dto;
+        return FraudDTO.allow();
     }
-
 }

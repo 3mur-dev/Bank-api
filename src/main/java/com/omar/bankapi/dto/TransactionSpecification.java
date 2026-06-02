@@ -1,8 +1,8 @@
 package com.omar.bankapi.dto;
 
 import com.omar.bankapi.model.Transaction;
-import com.omar.bankapi.model.TransactionStatus;
-import com.omar.bankapi.model.TransactionType;
+import com.omar.bankapi.model.enums.TransactionStatus;
+import com.omar.bankapi.model.enums.TransactionType;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.util.ArrayList;
@@ -10,6 +10,9 @@ import java.util.List;
 import jakarta.persistence.criteria.Predicate;
 
 public class TransactionSpecification {
+
+    private TransactionSpecification() {
+    }
 
     public static Specification<Transaction> filter(
             Long accountId,

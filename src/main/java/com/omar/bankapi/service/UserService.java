@@ -1,202 +1,155 @@
 package com.omar.bankapi.service;
 
 import com.omar.bankapi.dto.*;
+import com.omar.bankapi.mapper.UserMapper;
 import com.omar.bankapi.model.*;
+import com.omar.bankapi.model.enums.TransactionStatus;
 import com.omar.bankapi.repository.*;
-import com.omar.bankapi.util.AccountNumberGenerator;
 import lombok.AllArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @AllArgsConstructor
 @Service
 public class UserService {
 
-    private static final int ACCOUNT_NUMBER_RETRY_LIMIT = 5;
-
-    private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
-    private final JwtService jwtService;
+    private final AuditService auditService;
 
-    // Get all users
-    public List<UserDTO> getAllUsers() {
+    public Page<UserDTO> getAllUsers(Pageable pageable, boolean includeDeleted) {
         requireAdmin();
-        return userRepository.findAll()
+        return (includeDeleted ? userRepository.findAll(pageable) : userRepository.findAllByDeletedFalse(pageable))
+                .map(UserMapper::toDTO);
+    }
+
+    public UserDTO getUserById(Long id, boolean includeDeleted) {
+        if (includeDeleted) {
+            requireAdmin();
+        }
+
+        User user = (includeDeleted
+                ? userRepository.findById(id)
+                : userRepository.findByIdAndDeletedFalse(id))
+                .orElseThrow(() ->
+                        new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        requireAdminOrSelf(user);
+        return UserMapper.toDTO(user);
+    }
+
+    @Transactional
+    public UserDTO closeUser(Long id) {
+
+        User user = userRepository.findById(id)
+                .orElseThrow(() ->
+                        new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        requireAdminOrSelf(user);
+
+        if (user.isDeleted()) {
+            return UserMapper.toDTO(user);
+        }
+
+        if (accountRepository.existsByUserIdAndActiveTrue(user.getId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "User cannot be closed while any account is still open"
+            );
+        }
+
+        List<Long> accountIds = accountRepository.findByUserId(user.getId())
                 .stream()
-                .map(this::mapToUserDTO)
-                .collect(Collectors.toList());
-    }
+                .map(Account::getId)
+                .toList();
 
-    // Get user by ID
-    public UserDTO getUserById(Long id) {
-        User user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-
-        requireAdminOrSelf(user);
-        return mapToUserDTO(user);
-    }
-
-    // Create user
-    @Transactional
-    public UserDTO register(CreateUserDTO dto) {
-
-        String email = dto.getEmail().trim().toLowerCase();
-        String username = dto.getUsername().trim().toLowerCase();
-
-        if (userRepository.existsByUsername(username)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
+        if (!accountIds.isEmpty() &&
+                accountRepository.existsPendingTransactionsForAccounts(accountIds, TransactionStatus.PENDING)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "User cannot be closed while account transactions are pending"
+            );
         }
 
-        if (userRepository.existsByEmail(email)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
-        }
+        UserDTO before = UserMapper.toDTO(user);
+        Instant deletedAt = Instant.now();
+        user.setDeleted(true);
+        user.setDeletedAt(deletedAt);
+        user.setUsername(anonymizeUsername(user.getId(), deletedAt));
+        user.setEmail(anonymizeEmail(user.getId(), deletedAt));
 
-        Role role = roleRepository.findByName("ROLE_USER")
-                .or(() -> roleRepository.findByName("USER"))
-                .orElseThrow(() ->
-                        new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Default role not configured"));
+        User saved = userRepository.save(user);
 
-        User user = new User();
-        user.setUsername(username);
-        user.setEmail(email);
-        user.setPassword(passwordEncoder.encode(dto.getPassword()));
-        user.setRole(role);
+        auditService.record(
+                "CLOSE_USER",
+                "USER",
+                String.valueOf(saved.getId()),
+                true,
+                null,
+                before,
+                UserMapper.toDTO(saved)
+        );
 
-        User savedUser = userRepository.save(user);
-
-        createDefaultAccount(savedUser);
-
-        return mapToUserDTO(savedUser);
-    }
-
-    @Transactional
-    public void deleteUserById(Long id) {
-
-        User user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-
-        requireAdminOrSelf(user);
-
-        List<Account> accounts = accountRepository.findByUserId(user.getId());
-        if (!accounts.isEmpty()) {
-            List<Long> ids = accounts.stream().map(Account::getId).toList();
-            transactionRepository.deleteBySenderIdInOrReceiverIdIn(ids, ids);
-            accountRepository.deleteAllById(ids);
-
-        }
-
-
-        userRepository.delete(user);
+        return UserMapper.toDTO(saved);
     }
 
     @Transactional
     public UserDTO updateUser(Long id, UpdateUserDTO dto) {
 
-        User user = userRepository.findById(id)
+        User user = userRepository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
 
         requireAdminOrSelf(user);
-        String email = dto.getEmail().trim().toLowerCase();
-        String username = dto.getUsername().trim().toLowerCase();
+        String email = dto.email().trim().toLowerCase();
+        String username = dto.username().trim().toLowerCase();
 
-        if (userRepository.existsByUsernameAndIdNot(username, id)) {
+        if (userRepository.existsByUsernameAndIdNotAndDeletedFalse(username, id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
         }
 
-        if (userRepository.existsByEmailAndIdNot(email, id)) {
+        if (userRepository.existsByEmailAndIdNotAndDeletedFalse(email, id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
 
         user.setUsername(username);
         user.setEmail(email);
 
-        if (dto.getRoleId() != null) {
+        if (dto.roleId() != null) {
             if (!isAdmin(requireAuth())) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
             }
-            Role role = roleRepository.findById(dto.getRoleId())
+            Role role = roleRepository.findById(dto.roleId())
                     .orElseThrow(() ->
                             new ResponseStatusException(HttpStatus.NOT_FOUND, "Role not found"));
             user.setRole(role);
         }
 
-        return mapToUserDTO(userRepository.save(user));
+        return UserMapper.toDTO(userRepository.save(user));
 
     }
-    private void createDefaultAccount(User savedUser) {
-        int attempts = 0;
 
-        while (attempts < ACCOUNT_NUMBER_RETRY_LIMIT) {
-            attempts++;
-
-            Account account = new Account();
-            account.setAccountNumber(AccountNumberGenerator.generate());
-            account.setBalance(BigDecimal.ZERO);
-            account.setUser(savedUser);
-            account.setType(AccountType.CHECKING);
-
-            try {
-                accountRepository.save(account);
-                return;
-            } catch (DataIntegrityViolationException ex) {
-                if (attempts >= ACCOUNT_NUMBER_RETRY_LIMIT) {
-                    throw new ResponseStatusException(
-                            HttpStatus.CONFLICT,
-                            "Failed to generate a unique account number");
-                }
-            }
-        }
+    private String anonymizeUsername(Long userId, Instant deletedAt) {
+        return "closed_user_" + userId + "_" + deletedAt.toEpochMilli();
     }
 
-    // Map entity -> DTO
-    private UserDTO mapToUserDTO(User user) {
-
-        UserDTO dto = new UserDTO();
-
-        dto.setId(user.getId());
-        dto.setUsername(user.getUsername());
-        dto.setEmail(user.getEmail());
-        dto.setRole(user.getRole().getName());
-
-        return dto;
+    private String anonymizeEmail(Long userId, Instant deletedAt) {
+        return "closed_user_" + userId + "_" + deletedAt.toEpochMilli() + "@deleted.local";
     }
 
-    public Map<String, String> login(LoginDTO dto) {
 
-        String username = dto.getUsername() == null ? null : dto.getUsername().trim().toLowerCase();
-
-        User user = userRepository.findByUsername(username == null ? "" : username)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
-
-        if (!passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
-        }
-
-        String token = jwtService.generateToken(
-                user.getUsername(),
-                user.getRole().getName()
-        );
-
-        return Map.of("token", token);
-    }
 
     private Authentication requireAuth() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

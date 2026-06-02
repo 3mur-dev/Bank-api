@@ -16,11 +16,11 @@ public class AdminService {
     private final TransactionRepository transactionRepository;
 
     public AdminStatsDTO getStats() {
-        AdminStatsDTO dto = new AdminStatsDTO();
-        dto.setTotalUsers(userRepository.count());
-        dto.setTotalAccounts(accountRepository.count());
-        dto.setTotalTransactions(transactionRepository.count());
-        dto.setTotalBalances(accountRepository.sumBalances());
-        return dto;
+        return new AdminStatsDTO(
+                userRepository.count(),
+                accountRepository.count(),
+                transactionRepository.count(),
+                accountRepository.sumBalances()
+        );
     }
 }
